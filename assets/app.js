@@ -1,0 +1,550 @@
+﻿(() => {
+  const {
+    FACILITY_CSV_URLS,
+    TILE_URL,
+    TILE_ATTRIBUTION,
+    DATASET_ATTRIBUTION,
+    MARKER_STYLE_DEFAULT,
+    MARKER_STYLE_FULL,
+    MARKER_STYLE_LIMITED,
+    MARKER_STYLE_AVAILABLE,
+  } = window.App.config;
+  const { fetchCSV, parseCSV } = window.App.csv;
+  const { buildTooltipHtml, buildPopupHtml } = window.App.availability;
+  const {
+    resolveMarkerStyle,
+    getRecruitmentCounts,
+    getRecruitmentStatus,
+    createRangeLabel,
+    getPopupOptions,
+    isMobileView,
+  } = window.App.mapUtils;
+  const { addFacilitiesFromDataset } = window.App.facilities;
+
+let menuToggle = null;
+let currentAge = "";
+const detailsModal = document.getElementById("details-modal");
+const detailsBody = document.getElementById("details-body");
+const detailsClose = document.getElementById("details-close");
+const aboutModal = document.getElementById("about-modal");
+const aboutClose = document.getElementById("about-close");
+const aboutButton = document.getElementById("about-button");
+let lastDetailsFocus = null;
+let lastAboutFocus = null;
+
+const focusIfPossible = element => {
+  if (!element || typeof element.focus !== "function") {
+    return false;
+  }
+  if (!element.isConnected || element.getClientRects().length === 0) {
+    return false;
+  }
+  element.focus();
+  return document.activeElement === element;
+};
+
+function setDetailsOpen(isOpen, htmlContent = "") {
+  if (!detailsModal || !detailsBody) {
+    return;
+  }
+  if (isOpen) {
+    lastDetailsFocus = document.activeElement;
+    detailsBody.innerHTML = htmlContent;
+    detailsModal.inert = false;
+    detailsModal.setAttribute("aria-hidden", "false");
+    if (detailsClose) {
+      detailsClose.focus();
+    }
+    detailsModal.classList.toggle("open", true);
+    return;
+  }
+  const activeElement = document.activeElement;
+  if (detailsModal.contains(activeElement)) {
+    const focused = focusIfPossible(lastDetailsFocus) || focusIfPossible(menuToggle);
+    if (!focused && activeElement && activeElement.blur) {
+      activeElement.blur();
+    }
+  }
+  detailsModal.classList.toggle("open", false);
+  detailsModal.setAttribute("aria-hidden", "true");
+  detailsModal.inert = true;
+}
+
+function setAboutOpen(isOpen) {
+  if (!aboutModal) {
+    return;
+  }
+  if (isOpen) {
+    lastAboutFocus = document.activeElement;
+    setDetailsOpen(false);
+    aboutModal.inert = false;
+    aboutModal.setAttribute("aria-hidden", "false");
+    if (aboutClose) {
+      aboutClose.focus();
+    }
+    aboutModal.classList.toggle("open", true);
+    return;
+  }
+  const activeElement = document.activeElement;
+  if (aboutModal.contains(activeElement)) {
+    const focused = focusIfPossible(lastAboutFocus) || focusIfPossible(aboutButton) || focusIfPossible(menuToggle);
+    if (!focused && activeElement && activeElement.blur) {
+      activeElement.blur();
+    }
+  }
+  aboutModal.classList.toggle("open", false);
+  aboutModal.setAttribute("aria-hidden", "true");
+  aboutModal.inert = true;
+}
+
+async function main() {
+  const facilityTexts = await Promise.all(
+    FACILITY_CSV_URLS.map(url => fetchCSV(url))
+  );
+  const facilities = facilityTexts.map(parseCSV);
+
+  const facilityMap = {};
+  facilities.forEach((fac, index) => {
+    let source = "certified";
+    if (index === 1) {
+      source = "private";
+    } else if (index === 2) {
+      source = "municipal";
+    } else if (index === 3) {
+      source = "small";
+    } else if (index === 4) {
+      source = "onsite";
+    } else if (index === 5) {
+      source = "company";
+    } else if (index === 6) {
+      source = "unlicensed";
+    } else if (index === 7) {
+      source = "unlicensed-limited";
+    }
+    addFacilitiesFromDataset(facilityMap, fac, source);
+  });
+
+  const map = L.map("map", { zoomControl: false, attributionControl: true })
+    .setView([34.7108, 137.7266], 12);
+  L.tileLayer(TILE_URL, {
+    maxZoom: 19,
+    attribution: TILE_ATTRIBUTION,
+  }).addTo(map);
+  map.attributionControl.setPrefix(
+    '<a href="https://leafletjs.com/" target="_blank" rel="noopener">Leaflet</a> (MIT)'
+  );
+  map.attributionControl.setPosition("bottomright");
+  map.attributionControl.addAttribution(DATASET_ATTRIBUTION);
+  L.control.zoom({ position: "bottomright" }).addTo(map);
+
+  const locateControl = L.control({ position: "bottomright" });
+  locateControl.onAdd = () => {
+    const container = L.DomUtil.create("div", "leaflet-control leaflet-control-locate");
+    const button = L.DomUtil.create("button", "locate-button", container);
+    button.type = "button";
+    button.title = "迴ｾ蝨ｨ蝨ｰ繧定｡ｨ遉ｺ";
+    button.setAttribute("aria-label", "迴ｾ蝨ｨ蝨ｰ繧定｡ｨ遉ｺ");
+    button.innerHTML = `
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <circle cx="12" cy="12" r="4"></circle>
+        <line x1="12" y1="2" x2="12" y2="6"></line>
+        <line x1="12" y1="18" x2="12" y2="22"></line>
+        <line x1="2" y1="12" x2="6" y2="12"></line>
+        <line x1="18" y1="12" x2="22" y2="12"></line>
+      </svg>
+    `;
+
+    L.DomEvent.disableClickPropagation(container);
+    L.DomEvent.on(button, "click", event => {
+      L.DomEvent.stop(event);
+      map.locate({ setView: true, maxZoom: 16 });
+    });
+    return container;
+  };
+  locateControl.addTo(map);
+
+  let hit = 0;
+  let miss = 0;
+  const markers = [];
+  const updateLabelOpacity = () => {
+    const zoom = map.getZoom();
+    const minZoom = 12;
+    const maxZoom = 14;
+    let opacity = 1;
+    if (zoom <= minZoom) {
+      opacity = 0;
+    } else if (zoom >= maxZoom) {
+      opacity = 1;
+    } else {
+      opacity = (zoom - minZoom) / (maxZoom - minZoom);
+    }
+    markers.forEach(item => {
+      const tooltip = item.marker.getTooltip();
+      const el = tooltip ? tooltip.getElement() : null;
+      if (!el) {
+        return;
+      }
+      el.style.opacity = String(opacity);
+      el.style.pointerEvents = opacity < 0.2 ? "none" : "auto";
+    });
+  };
+
+  Object.values(facilityMap).forEach(facility => {
+    const recruitmentRows = Array.isArray(facility.recruitment)
+      ? facility.recruitment
+      : [];
+    if (recruitmentRows.length) {
+      hit++;
+    } else {
+      miss++;
+    }
+
+    let labelClass = "marker-label";
+    if (facility.source === "private") {
+      labelClass = "marker-label marker-label-private";
+    } else if (facility.source === "municipal") {
+      labelClass = "marker-label marker-label-municipal";
+    } else if (facility.source === "small") {
+      labelClass = "marker-label marker-label-small";
+    } else if (facility.source === "onsite") {
+      labelClass = "marker-label marker-label-onsite";
+    } else if (facility.source === "company") {
+      labelClass = "marker-label marker-label-company";
+    } else if (facility.source === "unlicensed") {
+      labelClass = "marker-label marker-label-unlicensed";
+    } else if (facility.source === "unlicensed-limited") {
+      labelClass = "marker-label marker-label-unlicensed-limited";
+    }
+
+    const openDetails = () => {
+      if (isMobileView()) {
+        setDetailsOpen(true, buildPopupHtml(facility, recruitmentRows, currentAge));
+        return;
+      }
+      if (marker.getPopup()) {
+        marker.openPopup();
+      }
+    };
+
+    const marker = L.circleMarker([facility.lat, facility.lon], {
+      radius: 8,
+      color: MARKER_STYLE_DEFAULT.color,
+      fillColor: MARKER_STYLE_DEFAULT.fillColor,
+      fillOpacity: 0.9,
+      weight: 2,
+    })
+      .addTo(map)
+      .bindTooltip(buildTooltipHtml(facility, recruitmentRows, currentAge), {
+        permanent: true,
+        direction: "top",
+        offset: [0, -10],
+        className: labelClass,
+        interactive: true,
+      });
+
+    if (isMobileView()) {
+      marker.on("click", openDetails);
+    } else {
+      marker.bindPopup(
+        buildPopupHtml(facility, recruitmentRows, currentAge),
+        getPopupOptions()
+      );
+    }
+    marker.on("tooltipopen", () => {
+      const tooltip = marker.getTooltip();
+      const tooltipEl = tooltip ? tooltip.getElement() : null;
+      if (!tooltipEl || tooltipEl.dataset.tapBound) {
+        return;
+      }
+      tooltipEl.dataset.tapBound = "true";
+      tooltipEl.style.pointerEvents = "auto";
+      tooltipEl.style.cursor = "pointer";
+      tooltipEl.addEventListener("click", event => {
+        event.preventDefault();
+        event.stopPropagation();
+        openDetails();
+      });
+    });
+
+    markers.push({ marker, facility, recruitmentRows });
+  });
+  map.on("zoomend", updateLabelOpacity);
+  map.whenReady(updateLabelOpacity);
+
+  menuToggle = document.getElementById("menu-toggle");
+  const menuBackdrop = document.getElementById("menu-backdrop");
+  const sideMenu = document.getElementById("side-menu");
+  const menuClose = document.getElementById("menu-close");
+  const ageSelect = document.getElementById("age-select");
+  const filterCertified = document.getElementById("filter-certified");
+  const filterPrivate = document.getElementById("filter-private");
+  const filterMunicipal = document.getElementById("filter-municipal");
+  const filterSmall = document.getElementById("filter-small");
+  const filterOnsite = document.getElementById("filter-onsite");
+  const filterCompany = document.getElementById("filter-company");
+  const filterUnlicensed = document.getElementById("filter-unlicensed");
+  const filterUnlicensedLimited = document.getElementById("filter-unlicensed-limited");
+  const summaryInfo = document.getElementById("summary-info");
+  const statusAvailable = document.getElementById("status-available");
+  const statusLimited = document.getElementById("status-limited");
+  const statusFull = document.getElementById("status-full");
+  const statusSummary = document.getElementById("status-summary");
+
+  const setMenuOpen = isOpen => {
+    sideMenu.classList.toggle("open", isOpen);
+    menuBackdrop.classList.toggle("open", isOpen);
+    if (!isOpen && sideMenu.contains(document.activeElement)) {
+      menuToggle.focus();
+    }
+    sideMenu.setAttribute("aria-hidden", String(!isOpen));
+    sideMenu.inert = !isOpen;
+    menuToggle.setAttribute("aria-expanded", String(isOpen));
+  };
+
+  menuToggle.addEventListener("click", () => {
+    setMenuOpen(!sideMenu.classList.contains("open"));
+  });
+  if (menuClose) {
+    menuClose.addEventListener("click", () => setMenuOpen(false));
+  }
+  menuBackdrop.addEventListener("click", () => setMenuOpen(false));
+  document.addEventListener("keydown", event => {
+    if (event.key === "Escape") {
+      setMenuOpen(false);
+      setDetailsOpen(false);
+      setAboutOpen(false);
+    }
+  });
+  if (detailsClose) {
+    detailsClose.addEventListener("click", () => setDetailsOpen(false));
+  }
+  if (detailsModal) {
+    detailsModal.addEventListener("click", event => {
+      if (event.target === detailsModal) {
+        setDetailsOpen(false);
+      }
+    });
+  }
+  if (aboutButton) {
+    aboutButton.addEventListener("click", () => setAboutOpen(true));
+  }
+  if (aboutClose) {
+    aboutClose.addEventListener("click", () => setAboutOpen(false));
+  }
+  if (aboutModal) {
+    aboutModal.addEventListener("click", event => {
+      if (event.target === aboutModal) {
+        setAboutOpen(false);
+      }
+    });
+  }
+
+  const ageSet = new Set();
+  Object.values(facilityMap).forEach(facility => {
+    (facility.recruitment || []).forEach(item => {
+      if (Number.isFinite(item.age)) {
+        ageSet.add(item.age);
+      }
+    });
+  });
+  const ages = Array.from(ageSet).sort((a, b) => a - b);
+  ageSelect.innerHTML = "";
+  const allOption = document.createElement("option");
+  allOption.value = "";
+  allOption.textContent = "縺吶∋縺ｦ";
+  ageSelect.appendChild(allOption);
+  ages.forEach(age => {
+    const option = document.createElement("option");
+    option.value = String(age);
+    option.textContent = `${age}豁ｳ`;
+    ageSelect.appendChild(option);
+  });
+  if (!ages.length) {
+    ageSelect.disabled = true;
+  }
+
+  const typeFilters = {
+    certified: filterCertified,
+    private: filterPrivate,
+    municipal: filterMunicipal,
+    small: filterSmall,
+    onsite: filterOnsite,
+    company: filterCompany,
+    unlicensed: filterUnlicensed,
+    "unlicensed-limited": filterUnlicensedLimited,
+  };
+  const isTypeEnabled = source => {
+    const control = typeFilters[source];
+    return control ? control.checked : true;
+  };
+
+  let userLocationMarker = null;
+  let userLocationCircle = null;
+  let userLocationCircle2km = null;
+  let userLocationCircle5km = null;
+  let userLocationLabel2km = null;
+  let userLocationLabel5km = null;
+  map.on("locationfound", event => {
+    if (userLocationMarker) {
+      map.removeLayer(userLocationMarker);
+    }
+    if (userLocationCircle) {
+      map.removeLayer(userLocationCircle);
+    }
+    if (userLocationCircle2km) {
+      map.removeLayer(userLocationCircle2km);
+    }
+    if (userLocationCircle5km) {
+      map.removeLayer(userLocationCircle5km);
+    }
+    if (userLocationLabel2km) {
+      map.removeLayer(userLocationLabel2km);
+    }
+    if (userLocationLabel5km) {
+      map.removeLayer(userLocationLabel5km);
+    }
+
+    userLocationMarker = L.circleMarker(event.latlng, {
+      radius: 7,
+      color: "#2563eb",
+      fillColor: "#60a5fa",
+      fillOpacity: 0.9,
+      weight: 2,
+    }).addTo(map).bindPopup("迴ｾ蝨ｨ蝨ｰ");
+
+    userLocationCircle = L.circle(event.latlng, {
+      radius: event.accuracy,
+      color: "#60a5fa",
+      fillColor: "#bfdbfe",
+      fillOpacity: 0.2,
+      weight: 1,
+      interactive: false,
+    }).addTo(map);
+
+    userLocationCircle2km = L.circle(event.latlng, {
+      radius: 2000,
+      color: "#2563eb",
+      fillColor: "#bfdbfe",
+      fillOpacity: 0.12,
+      weight: 2,
+      dashArray: "4 6",
+      interactive: false,
+    }).addTo(map);
+
+    userLocationCircle5km = L.circle(event.latlng, {
+      radius: 5000,
+      color: "#1d4ed8",
+      fillColor: "#dbeafe",
+      fillOpacity: 0.08,
+      weight: 2,
+      dashArray: "4 6",
+      interactive: false,
+    }).addTo(map);
+
+    userLocationLabel2km = createRangeLabel(
+      map,
+      event.latlng,
+      2000,
+      "2km",
+      "range-label range-label-2km",
+      0.985
+    );
+    userLocationLabel5km = createRangeLabel(
+      map,
+      event.latlng,
+      5000,
+      "5km",
+      "range-label range-label-5km"
+    );
+  });
+  map.on("locationerror", event => {
+    console.warn("菴咲ｽｮ諠・ｱ縺ｮ蜿門ｾ励↓螟ｱ謨励＠縺ｾ縺励◆縲・, event.message);
+    alert("菴咲ｽｮ諠・ｱ縺ｮ蜿門ｾ励↓螟ｱ謨励＠縺ｾ縺励◆縲ゅヶ繝ｩ繧ｦ繧ｶ縺ｮ險ｱ蜿ｯ險ｭ螳壹ｒ縺皮｢ｺ隱阪￥縺縺輔＞縲・);
+  });
+
+  const updateMarkersForAge = () => {
+    const selectedAge = ageSelect.value;
+    currentAge = selectedAge;
+    const ageLabel = selectedAge ? `${selectedAge}豁ｳ` : "蜈ｨ蟷ｴ鮨｢";
+    let visible = 0;
+    let availableCount = 0;
+    let limitedCount = 0;
+    let fullCount = 0;
+    markers.forEach(item => {
+      const typeEnabled = isTypeEnabled(item.facility.source);
+      const shouldShow = typeEnabled;
+
+      if (shouldShow) {
+        if (!map.hasLayer(item.marker)) {
+          item.marker.addTo(map);
+        }
+        const shouldColor = Boolean(selectedAge);
+        const counts = shouldColor
+          ? getRecruitmentCounts(item.recruitmentRows, selectedAge)
+          : { recruit: null, apply: null };
+        const status = shouldColor
+          ? getRecruitmentStatus(counts.recruit, counts.apply)
+          : "";
+        const style = resolveMarkerStyle(status);
+        item.marker.setStyle(style);
+        item.marker.setTooltipContent(
+          buildTooltipHtml(item.facility, item.recruitmentRows, selectedAge)
+        );
+        if (item.marker.getPopup()) {
+          item.marker.setPopupContent(
+            buildPopupHtml(item.facility, item.recruitmentRows, selectedAge)
+          );
+        }
+        if (shouldColor) {
+          if (style === MARKER_STYLE_AVAILABLE) {
+            availableCount++;
+          } else if (style === MARKER_STYLE_LIMITED) {
+            limitedCount++;
+          } else if (style === MARKER_STYLE_FULL) {
+            fullCount++;
+          }
+        }
+        visible++;
+      } else if (map.hasLayer(item.marker)) {
+        map.removeLayer(item.marker);
+      }
+    });
+
+    if (summaryInfo) {
+      summaryInfo.textContent = `蟷ｴ鮨｢: ${ageLabel} / 陦ｨ遉ｺ荳ｭ: ${visible}譁ｽ險ｭ`;
+    }
+    if (statusAvailable) {
+      statusAvailable.textContent = `${availableCount}`;
+    }
+    if (statusLimited) {
+      statusLimited.textContent = `${limitedCount}`;
+    }
+    if (statusFull) {
+      statusFull.textContent = `${fullCount}`;
+    }
+    if (statusSummary) {
+      statusSummary.classList.toggle("hidden", !selectedAge);
+    }
+    if (detailsModal && detailsModal.classList.contains("open")) {
+      setDetailsOpen(false);
+    }
+  };
+
+  ageSelect.addEventListener("change", updateMarkersForAge);
+  Object.values(typeFilters).forEach(control => {
+    if (!control) return;
+    control.addEventListener("change", updateMarkersForAge);
+  });
+
+  updateMarkersForAge();
+
+  console.log("蜍滄寔繝ｻ逕ｳ霎ｼ諠・ｱ縺ゅｊ:", hit, "/ 諠・ｱ縺ｪ縺・", miss);
+}
+
+  main().catch(console.error);
+})();
+
+
+
+
+
