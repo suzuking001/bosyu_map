@@ -135,9 +135,10 @@ async function main() {
   );
   map.attributionControl.setPosition("bottomright");
   map.attributionControl.addAttribution(DATASET_ATTRIBUTION);
-  L.control.zoom({ position: "bottomright" }).addTo(map);
+  const controlPosition = isMobileView() ? "topleft" : "bottomright";
+  L.control.zoom({ position: controlPosition }).addTo(map);
 
-  const locateControl = L.control({ position: "bottomright" });
+  const locateControl = L.control({ position: controlPosition });
   locateControl.onAdd = () => {
     const container = L.DomUtil.create("div", "leaflet-control leaflet-control-locate");
     const button = L.DomUtil.create("button", "locate-button", container);
