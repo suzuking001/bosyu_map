@@ -76,6 +76,10 @@ function buildPopupHtml(facility, recruitmentRows, selectedAge) {
   const mapsUrl = `https://www.google.com/maps?q=${encodeURIComponent(
     `${facility.lat},${facility.lon}`
   )}`;
+  const searchQuery = facility.name
+    ? `浜松市 ${facility.name}`
+    : "浜松市";
+  const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(searchQuery)}`;
   const phoneRaw = String(facility.phone || "").trim();
   const phoneDigits = phoneRaw.replace(/[^\d+]/g, "");
   const phoneLabel = phoneRaw ? `電話をかける: ${escapeHtml(phoneRaw)}` : "電話をかける";
@@ -126,6 +130,7 @@ function buildPopupHtml(facility, recruitmentRows, selectedAge) {
           ${metaLines}
           <div class="section popup-actions">
             <a class="popup-link" href="${mapsUrl}" target="_blank" rel="noopener">Google Mapで開く</a>
+            <a class="popup-link" href="${searchUrl}" target="_blank" rel="noopener">Googleで検索</a>
             ${phoneLink}
             ${websiteLink}
           </div>

@@ -315,6 +315,8 @@ async function main() {
   };
   locateControl.addTo(map);
 
+  const markerRenderer = L.canvas({ padding: 0.5 });
+
   let hit = 0;
   let miss = 0;
   const markers = [];
@@ -384,6 +386,7 @@ async function main() {
       fillColor: MARKER_STYLE_DEFAULT.fillColor,
       fillOpacity: 0.9,
       weight: 2,
+      renderer: markerRenderer,
     })
       .addTo(map)
       .bindTooltip(buildTooltipHtml(facility, recruitmentRows, currentAge), {
