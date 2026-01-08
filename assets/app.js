@@ -32,6 +32,151 @@ const aboutButton = document.getElementById("about-button");
 let lastDetailsFocus = null;
 let lastAboutFocus = null;
 
+const WORKER_SOURCE = String.raw`
+(() => {
+  function parseCSV(text) {
+    const rows = [];
+    let row = [];
+    let field = "";
+    let inQuotes = false;
+
+    for (let i = 0; i < text.length; i++) {
+      const char = text[i];
+      if (inQuotes) {
+        if (char === "\"") {
+          if (text[i + 1] === "\"") {
+            field += "\"";
+            i++;
+          } else {
+            inQuotes = false;
+          }
+        } else {
+          field += char;
+        }
+        continue;
+      }
+
+      if (char === "\"") {
+        inQuotes = true;
+      } else if (char === ",") {
+        row.push(field);
+        field = "";
+      } else if (char === "\n") {
+        row.push(field);
+        rows.push(row);
+        row = [];
+        field = "";
+      } else if (char !== "\r") {
+        field += char;
+      }
+    }
+
+    if (field.length || row.length) {
+      row.push(field);
+      rows.push(row);
+    }
+
+    const headers = rows.shift() || [];
+    const cleanedRows = rows.filter(r => r.some(cell => String(cell).trim() !== ""));
+    return { headers, rows: cleanedRows };
+  }
+
+  self.onmessage = event => {
+    const data = event.data || {};
+    const id = data.id;
+    const facilityTexts = data.facilityTexts;
+    if (!id || !Array.isArray(facilityTexts)) {
+      return;
+    }
+    try {
+      const facilities = facilityTexts.map(parseCSV);
+      self.postMessage({
+        id,
+        ok: true,
+        payload: { facilities },
+      });
+    } catch (error) {
+      self.postMessage({
+        id,
+        ok: false,
+        error: error && error.message ? error.message : "Worker failed",
+      });
+    }
+  };
+})();
+`;
+
+function parseInWorker(facilityTexts) {
+  if (!("Worker" in window)) {
+    return Promise.resolve(null);
+  }
+  if (!Array.isArray(facilityTexts)) {
+    return Promise.resolve(null);
+  }
+  return new Promise(resolve => {
+    let worker;
+    let workerUrl = null;
+    const createInlineWorker = () => {
+      const blob = new Blob([WORKER_SOURCE], { type: "text/javascript" });
+      workerUrl = URL.createObjectURL(blob);
+      return new Worker(workerUrl);
+    };
+    try {
+      if (window.location.protocol === "file:") {
+        worker = createInlineWorker();
+      } else {
+        try {
+          worker = new Worker("assets/js/csv-worker.js");
+        } catch (error) {
+          worker = createInlineWorker();
+        }
+      }
+    } catch (error) {
+      console.warn("Worker unavailable:", error);
+      if (workerUrl) {
+        URL.revokeObjectURL(workerUrl);
+      }
+      resolve(null);
+      return;
+    }
+
+    const messageId = `csv-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const cleanup = () => {
+      worker.removeEventListener("message", handleMessage);
+      worker.removeEventListener("error", handleError);
+      worker.terminate();
+      if (workerUrl) {
+        URL.revokeObjectURL(workerUrl);
+      }
+    };
+    const handleMessage = event => {
+      const data = event.data;
+      if (!data || data.id !== messageId) {
+        return;
+      }
+      cleanup();
+      if (data.ok && data.payload) {
+        resolve(data.payload);
+        return;
+      }
+      console.warn("Worker parse failed:", data && data.error);
+      resolve(null);
+    };
+    const handleError = event => {
+      cleanup();
+      console.warn("Worker error:", event && event.message);
+      resolve(null);
+    };
+
+    worker.addEventListener("message", handleMessage);
+    worker.addEventListener("error", handleError);
+    worker.postMessage({
+      id: messageId,
+      facilityTexts,
+    });
+  });
+}
+
 const focusIfPossible = element => {
   if (!element || typeof element.focus !== "function") {
     return false;
@@ -101,7 +246,13 @@ async function main() {
   const facilityTexts = await Promise.all(
     FACILITY_CSV_URLS.map(url => fetchCSV(url))
   );
-  const facilities = facilityTexts.map(parseCSV);
+  let facilities = null;
+  const workerResult = await parseInWorker(facilityTexts);
+  if (workerResult) {
+    facilities = workerResult.facilities;
+  } else {
+    facilities = facilityTexts.map(parseCSV);
+  }
 
   const facilityMap = {};
   facilities.forEach((fac, index) => {
