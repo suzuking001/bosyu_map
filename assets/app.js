@@ -142,8 +142,8 @@ async function main() {
     const container = L.DomUtil.create("div", "leaflet-control leaflet-control-locate");
     const button = L.DomUtil.create("button", "locate-button", container);
     button.type = "button";
-    button.title = "迴ｾ蝨ｨ蝨ｰ繧定｡ｨ遉ｺ";
-    button.setAttribute("aria-label", "迴ｾ蝨ｨ蝨ｰ繧定｡ｨ遉ｺ");
+    button.title = "現在地を表示";
+    button.setAttribute("aria-label", "現在地を表示");
     button.innerHTML = `
       <svg viewBox="0 0 24 24" aria-hidden="true">
         <circle cx="12" cy="12" r="4"></circle>
@@ -351,12 +351,12 @@ async function main() {
   ageSelect.innerHTML = "";
   const allOption = document.createElement("option");
   allOption.value = "";
-  allOption.textContent = "縺吶∋縺ｦ";
+  allOption.textContent = "すべて";
   ageSelect.appendChild(allOption);
   ages.forEach(age => {
     const option = document.createElement("option");
     option.value = String(age);
-    option.textContent = `${age}豁ｳ`;
+    option.textContent = `${age}歳`;
     ageSelect.appendChild(option);
   });
   if (!ages.length) {
@@ -410,7 +410,7 @@ async function main() {
       fillColor: "#60a5fa",
       fillOpacity: 0.9,
       weight: 2,
-    }).addTo(map).bindPopup("迴ｾ蝨ｨ蝨ｰ");
+    }).addTo(map).bindPopup("現在地");
 
     userLocationCircle = L.circle(event.latlng, {
       radius: event.accuracy,
@@ -458,14 +458,14 @@ async function main() {
     );
   });
   map.on("locationerror", event => {
-    console.warn("菴咲ｽｮ諠・ｱ縺ｮ蜿門ｾ励↓螟ｱ謨励＠縺ｾ縺励◆縲・, event.message);
-    alert("菴咲ｽｮ諠・ｱ縺ｮ蜿門ｾ励↓螟ｱ謨励＠縺ｾ縺励◆縲ゅヶ繝ｩ繧ｦ繧ｶ縺ｮ險ｱ蜿ｯ險ｭ螳壹ｒ縺皮｢ｺ隱阪￥縺縺輔＞縲・);
+    console.warn("位置情報の取得に失敗しました。", event.message);
+    alert("位置情報の取得に失敗しました。ブラウザの許可設定をご確認ください。");
   });
 
   const updateMarkersForAge = () => {
     const selectedAge = ageSelect.value;
     currentAge = selectedAge;
-    const ageLabel = selectedAge ? `${selectedAge}豁ｳ` : "蜈ｨ蟷ｴ鮨｢";
+    const ageLabel = selectedAge ? `${selectedAge}歳` : "全年齢";
     let visible = 0;
     let availableCount = 0;
     let limitedCount = 0;
@@ -511,7 +511,7 @@ async function main() {
     });
 
     if (summaryInfo) {
-      summaryInfo.textContent = `蟷ｴ鮨｢: ${ageLabel} / 陦ｨ遉ｺ荳ｭ: ${visible}譁ｽ險ｭ`;
+      summaryInfo.textContent = `年齢: ${ageLabel} / 表示中: ${visible}施設`;
     }
     if (statusAvailable) {
       statusAvailable.textContent = `${availableCount}`;
@@ -538,11 +538,12 @@ async function main() {
 
   updateMarkersForAge();
 
-  console.log("蜍滄寔繝ｻ逕ｳ霎ｼ諠・ｱ縺ゅｊ:", hit, "/ 諠・ｱ縺ｪ縺・", miss);
+  console.log("募集・申込情報あり:", hit, "/ 情報なし:", miss);
 }
 
   main().catch(console.error);
 })();
+
 
 
 
