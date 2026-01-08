@@ -285,7 +285,6 @@ async function main() {
     '<a href="https://leafletjs.com/" target="_blank" rel="noopener">Leaflet</a> (MIT)'
   );
   map.attributionControl.setPosition("bottomright");
-  map.attributionControl.addAttribution(DATASET_ATTRIBUTION);
   const controlPosition = isMobileView() ? "topleft" : "bottomright";
   L.control.zoom({ position: controlPosition }).addTo(map);
 

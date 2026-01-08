@@ -340,6 +340,20 @@
   flex-direction: column;
   gap: 10px;
 }
+.menu-license {
+  font-size: 11px;
+  color: #475569;
+  line-height: 1.4;
+  display: grid;
+  gap: 4px;
+}
+.menu-license a {
+  color: #2563eb;
+  text-decoration: none;
+}
+.menu-license a:hover {
+  text-decoration: underline;
+}
 .menu-footer .menu-note {
   margin-top: 0;
 }
